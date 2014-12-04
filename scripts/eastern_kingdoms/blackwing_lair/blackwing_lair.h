@@ -95,7 +95,6 @@ class MANGOS_DLL_DECL instance_blackwing_lair : public ScriptedInstance
         uint32 m_uiResetTimer;
         uint32 m_uiDefenseTimer;
 
-        GuidList m_lTechnicianGuids;
         GuidList m_lDragonEggsGuids;
         GuidList m_lDrakonidBonesGuids;
         GuidList m_lDefendersGuids;

@@ -50,11 +50,6 @@ void instance_blackwing_lair::OnCreatureCreate(Creature* pCreature)
 {
     switch (pCreature->GetEntry())
     {
-        case NPC_BLACKWING_TECHNICIAN:
-            // Sort creatures so we can get only the ones near Vaelastrasz
-            if (pCreature->IsWithinDist2d(aNefariusSpawnLoc[0], aNefariusSpawnLoc[1], 50.0f))
-                m_lTechnicianGuids.push_back(pCreature->GetObjectGuid());
-            break;
         case NPC_MONSTER_GENERATOR:
             m_vGeneratorGuids.push_back(pCreature->GetObjectGuid());
             break;

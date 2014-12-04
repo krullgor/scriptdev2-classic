@@ -42,6 +42,10 @@ enum
     SPELL_BURNING_ADRENALINE    = 23620,
     SPELL_CLEAVE                = 20684,                    // Chain cleave is most likely named something different and contains a dummy effect
 
+    //Technicians
+    SPELL_BOMB                  = 22334,
+    SPELL_BOTTLE_OF_POISON      = 22335,
+
     SPELL_NEFARIUS_CORRUPTION   = 23642,
 
     GOSSIP_ITEM_VAEL_1          = -3469003,
@@ -55,6 +59,18 @@ enum
 
     AREATRIGGER_VAEL_INTRO      = 3626,
 };
+
+struct Waypoint
+{
+    float x, y, z;
+};
+
+static const Waypoint technicianWaypoints[] =
+{
+    { -7514.52, -980.47, 423.68 },
+    { -7528.96, -959.66, 427.93 },
+};
+
 
 struct MANGOS_DLL_DECL boss_vaelastraszAI : public ScriptedAI
 {
@@ -141,6 +157,10 @@ struct MANGOS_DLL_DECL boss_vaelastraszAI : public ScriptedAI
     {
         if (m_pInstance)
             m_pInstance->SetData(TYPE_VAELASTRASZ, IN_PROGRESS);
+
+        // Make boss stand after wipe
+        if (m_creature->getStandState() == UNIT_STAND_STATE_DEAD)
+            m_creature->SetStandState(UNIT_STAND_STATE_STAND);
 
         // Buff players on aggro
         DoCastSpellIfCan(m_creature, SPELL_ESSENCE_OF_THE_RED);
@@ -343,9 +363,97 @@ bool GossipHello_boss_vaelastrasz(Player* pPlayer, Creature* pCreature)
     return true;
 }
 
+
+struct MANGOS_DLL_DECL blackwing_technicianAI : public ScriptedAI
+{
+    blackwing_technicianAI(Creature* pCreature) : ScriptedAI(pCreature)
+    {
+        m_pInstance = (ScriptedInstance*)pCreature->GetInstanceData();
+        Reset();
+
+    }
+
+    ScriptedInstance* m_pInstance;
+
+    uint32 m_uiBottleOfPoisionTimer;
+    uint32 m_uiBombTimer;
+    uint32 m_currentWaypoint = -1;
+
+    void Reset() override
+    {
+        if (m_currentWaypoint > -1)
+            m_creature->GetMotionMaster()->MovePoint(m_currentWaypoint, technicianWaypoints[m_currentWaypoint].x, technicianWaypoints[m_currentWaypoint].y, technicianWaypoints[m_currentWaypoint].z);
+
+        m_uiBottleOfPoisionTimer = 8000;
+        m_uiBombTimer = 0;
+    }
+
+    void JustDied(Unit* /*pKiller*/) override
+    {
+        m_creature->GetMotionMaster()->Clear();
+    }
+
+    void UpdateAI(const uint32 uiDiff) override
+    {
+        // Return since we have no target
+        if (!m_creature->SelectHostileTarget() || !m_creature->getVictim())
+            return;
+
+        if (m_uiBottleOfPoisionTimer < uiDiff)
+        {
+            if (DoCastSpellIfCan(m_creature->getVictim(), SPELL_BOTTLE_OF_POISON) == CAST_OK)
+                m_uiBottleOfPoisionTimer = 30000;
+        }
+        else
+            m_uiBottleOfPoisionTimer -= uiDiff;
+
+        if (m_uiBombTimer < uiDiff)
+        {
+            if (DoCastSpellIfCan(m_creature->getVictim(), SPELL_BOMB) == CAST_OK)
+            {
+                m_creature->SetSheath(SHEATH_STATE_RANGED);
+                m_uiBombTimer = 2500;
+            }
+        }
+        else
+            m_uiBombTimer -= uiDiff;
+
+        if(DoMeleeAttackIfReady())
+            m_creature->SetSheath(SHEATH_STATE_MELEE);
+        
+    }
+
+    void Flee()
+    {
+        DoScriptText(SAY_TECHNICIAN_RUN, m_creature);
+        m_creature->SetWalk(false, false); //TODO: Add fleeing animation
+        m_currentWaypoint = 0;
+        m_creature->GetMotionMaster()->MovePoint(m_currentWaypoint, technicianWaypoints[m_currentWaypoint].x, technicianWaypoints[m_currentWaypoint].y, technicianWaypoints[m_currentWaypoint].z);
+    }
+
+    void MovementInform(uint32 uiMoveType, uint32 uiPointId) override
+    {
+        if (uiMoveType != POINT_MOTION_TYPE)
+            return;
+        if (uiPointId < 1)
+        {
+            m_currentWaypoint++;
+            m_creature->GetMotionMaster()->MovePoint(m_currentWaypoint, technicianWaypoints[m_currentWaypoint].x, technicianWaypoints[m_currentWaypoint].y, technicianWaypoints[m_currentWaypoint].z);
+        }
+        else
+            m_creature->ForcedDespawn();
+    }
+
+};
+
 CreatureAI* GetAI_boss_vaelastrasz(Creature* pCreature)
 {
     return new boss_vaelastraszAI(pCreature);
+}
+
+CreatureAI* GetAI_blackwing_technician(Creature* pCreature)
+{
+    return new blackwing_technicianAI(pCreature);
 }
 
 bool AreaTrigger_at_vaelastrasz(Player* pPlayer, AreaTriggerEntry const* pAt)
@@ -361,11 +469,22 @@ bool AreaTrigger_at_vaelastrasz(Player* pPlayer, AreaTriggerEntry const* pAt)
             if (pInstance->GetData(TYPE_VAELASTRASZ) == NOT_STARTED)
             {
                 if (Creature* pVaelastrasz = pInstance->GetSingleCreatureFromStorage(NPC_VAELASTRASZ))
+                {
                     if (boss_vaelastraszAI* pVaelAI = dynamic_cast<boss_vaelastraszAI*>(pVaelastrasz->AI()))
                         pVaelAI->BeginIntro();
-            }
 
-            // ToDo: make goblins flee
+                    // make goblins flee
+                    std::list<Creature*> goblins;
+                    GetCreatureListWithEntryInGrid(goblins, pVaelastrasz, NPC_BLACKWING_TECHNICIAN, 25.0f);
+
+                    for (std::list<Creature*>::const_iterator itr = goblins.begin(); itr != goblins.end(); ++itr)
+                    {
+                        if ((*itr)->GetDistanceZ(pVaelastrasz) == 0) // skip technicians on upper floor
+                            if (blackwing_technicianAI* pGoblinAI = dynamic_cast<blackwing_technicianAI*>((*itr)->AI()))
+                                pGoblinAI->Flee();
+                    }
+                }
+            }
         }
     }
 
@@ -386,5 +505,10 @@ void AddSC_boss_vaelastrasz()
     pNewScript = new Script;
     pNewScript->Name = "at_vaelastrasz";
     pNewScript->pAreaTrigger = &AreaTrigger_at_vaelastrasz;
+    pNewScript->RegisterSelf();
+
+    pNewScript = new Script;
+    pNewScript->Name = "blackwing_technician";
+    pNewScript->GetAI = &GetAI_blackwing_technician;
     pNewScript->RegisterSelf();
 }
